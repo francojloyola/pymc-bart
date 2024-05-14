@@ -25,6 +25,7 @@ from pytensor import function as pytensor_function
 from pytensor.tensor.var import Variable
 
 from pymc_bart.bart import BARTRV
+from pymc_bart.algorithms import fast_linear_fit, fast_mean_ndim2, fast_mean, inverse_cdf, get_split_data_points
 from pymc_bart.tree import Node, Tree, get_idx_left_child, get_idx_right_child, get_depth
 from pymc_bart.split_rules import ContinuousSplitRule
 
@@ -548,53 +549,6 @@ def draw_leaf_value(
     return mu_mean, linear_params
 
 
-@njit
-def fast_mean(ari: npt.NDArray[np.float_]) -> Union[float, npt.NDArray[np.float_]]:
-    """Use Numba to speed up the computation of the mean."""
-    if ari.ndim == 1:
-        count = ari.shape[0]
-        suma = 0
-        for i in range(count):
-            suma += ari[i]
-        return suma / count
-    else:
-        res = np.zeros(ari.shape[0])
-        count = ari.shape[1]
-        for j in range(ari.shape[0]):
-            for i in range(count):
-                res[j] += ari[j, i]
-        return res / count
-
-
-@njit
-def fast_linear_fit(
-    x: npt.NDArray[np.float_],
-    y: npt.NDArray[np.float_],
-    m: int,
-    norm: npt.NDArray[np.float_],
-) -> Tuple[npt.NDArray[np.float_], List[npt.NDArray[np.float_]]]:
-    n = len(x)
-    y = y / m + np.expand_dims(norm, axis=1)
-
-    xbar = np.sum(x) / n
-    ybar = np.sum(y, axis=1) / n
-
-    x_diff = x - xbar
-    y_diff = y - np.expand_dims(ybar, axis=1)
-
-    x_var = np.dot(x_diff, x_diff.T)
-
-    if x_var == 0:
-        b = np.zeros(y.shape[0])
-    else:
-        b = np.dot(x_diff, y_diff.T) / x_var
-
-    a = ybar - b * xbar
-
-    y_fit = np.expand_dims(a, axis=1) + np.expand_dims(b, axis=1) * x
-    return y_fit.T, [a, b]
-
-
 def discrete_uniform_sampler(upper_value):
     """Draw from the uniform distribution with bounds [0, upper_value).
 
@@ -652,40 +606,6 @@ class UniformSampler:
             self.cache = np.random.uniform(
                 self.lower_bound, self.upper_bound, size=(self.shape, self.size)
             )
-
-
-@njit
-def inverse_cdf(
-    single_uniform: npt.NDArray[np.float_], normalized_weights: npt.NDArray[np.float_]
-) -> npt.NDArray[np.int_]:
-    """
-    Inverse CDF algorithm for a finite distribution.
-
-    Parameters
-    ----------
-    single_uniform: npt.NDArray[np.float_]
-        Ordered points in [0,1]
-
-    normalized_weights: npt.NDArray[np.float_])
-        Normalized weights
-
-    Returns
-    -------
-    new_indices: ndarray
-        a vector of indices in range 0, ..., len(normalized_weights)
-
-    Note: adapted from https://github.com/nchopin/particles
-    """
-    idx = 0
-    a_weight = normalized_weights[0]
-    sul = len(single_uniform)
-    new_indices = np.empty(sul, dtype=np.int64)
-    for i in range(sul):
-        while single_uniform[i] > a_weight:
-            idx += 1
-            a_weight += normalized_weights[idx]
-        new_indices[i] = idx
-    return new_indices
 
 
 def logp(point, out_vars, vars, shared):  # pylint: disable=redefined-builtin
